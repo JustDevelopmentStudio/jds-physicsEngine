@@ -1,7 +1,7 @@
 # jds-physicsEngine – Exports API
 
-**Version:** 1.2  
-**Dependencies:** `Renewed-Weathersync` (weather + time from GlobalState)
+**Version:** 2.0  
+**Dependencies:** `jds-advanceenvironment` (weather + time from GlobalState)
 
 All exports are **client-side**. Use with `exports['jds-physicsEngine']:ExportName(args)`.
 
@@ -30,7 +30,7 @@ The exports API unifies **physics**, **weather**, and **time** so other resource
 
 ---
 
-## Weather + Time (from Renewed-Weathersync)
+## Weather + Time (from jds-advanceenvironment)
 
 | Export | Returns | Description |
 |--------|---------|-------------|
@@ -42,7 +42,7 @@ The exports API unifies **physics**, **weather**, and **time** so other resource
 ### GetWeatherTimeSnapshot()
 
 ```lua
-local snap = exports['oc-physicsEngine']:GetWeatherTimeSnapshot()
+local snap = exports['jds-physicsEngine']:GetWeatherTimeSnapshot()
 -- snap.weather   : string
 -- snap.hour      : number
 -- snap.minute    : number
@@ -60,7 +60,7 @@ local snap = exports['oc-physicsEngine']:GetWeatherTimeSnapshot()
 Returns a single table combining physics, weather, and time. Ideal for HUDs and one-shot checks.
 
 ```lua
-local snap = exports['oc-physicsEngine']:GetPhysicsSnapshot()
+local snap = exports['jds-physicsEngine']:GetPhysicsSnapshot()
 -- or: GetPhysicsSnapshot(vehicle)
 -- or: GetPhysicsSnapshot(nil, { playerId = 1, teamId = 'police' })  -- future
 ```
@@ -89,7 +89,7 @@ local snap = exports['oc-physicsEngine']:GetPhysicsSnapshot()
 Shortcut for `effectiveGrip` only. Vehicle `nil` = current vehicle.
 
 ```lua
-local grip = exports['oc-physicsEngine']:GetEffectiveGrip()
+local grip = exports['jds-physicsEngine']:GetEffectiveGrip()
 if grip < 0.5 then
     -- Low grip, show HUD warning
 end
@@ -114,7 +114,7 @@ end
 CreateThread(function()
     while true do
         Wait(500)
-        local snap = exports['oc-physicsEngine']:GetPhysicsSnapshot()
+        local snap = exports['jds-physicsEngine']:GetPhysicsSnapshot()
         if snap.inVehicle then
             local grip = snap.effectiveGrip
             local wet = snap.roadWetness
@@ -129,7 +129,7 @@ end)
 ## Example: Stamina / Job Logic (Weather + Time)
 
 ```lua
-local wt = exports['oc-physicsEngine']:GetWeatherTimeSnapshot()
+local wt = exports['jds-physicsEngine']:GetWeatherTimeSnapshot()
 if wt.isWet then
     -- Heavier exertion in rain
 end
@@ -144,7 +144,7 @@ end
 
 ```lua
 -- When ox_core or framework exposes team/job:
-local snap = exports['oc-physicsEngine']:GetPhysicsSnapshot(nil, {
+local snap = exports['jds-physicsEngine']:GetPhysicsSnapshot(nil, {
     teamId = 'racing_team',  -- could apply team-specific grip mods
 })
 ```
@@ -155,6 +155,6 @@ local snap = exports['oc-physicsEngine']:GetPhysicsSnapshot(nil, {
 
 Ensure in `server.cfg`:
 ```cfg
-ensure Renewed-Weathersync
+ensure jds-advanceenvironment
 ensure jds-physicsEngine
 ```

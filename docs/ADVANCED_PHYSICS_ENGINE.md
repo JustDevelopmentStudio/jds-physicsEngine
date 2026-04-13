@@ -1,6 +1,6 @@
 # Advanced Physics Engine – GTA V / FiveM to Premium Level
 
-**Version:** 1.2  
+**Version:** 1.0  
 **Vision:** Bring GTA V/FiveM vehicle physics to Forza/sim-racing level by layering real-time temperature, road conditions, surface-specific grip, tire state, and suspension simulation on top of the RAGE engine.
 
 ---
@@ -31,7 +31,7 @@
 For integrating with HUDs, jobs, stamina, tire wear, and other scripts, see **[EXPORTS.md](./EXPORTS.md)**. Key exports:
 
 - `GetPhysicsSnapshot(vehicle?)` – unified physics + weather + time
-- `GetWeatherTimeSnapshot()` – weather + time from Renewed-Weathersync
+- `GetWeatherTimeSnapshot()` – weather + time from jds-advanceenvironment
 - `GetEffectiveGrip(vehicle?)` – surface × weather × tire grip
 - `GetServerWeather()`, `GetServerTime()`, `IsWeatherWet()` – weather/time helpers
 - Options: `{ playerId, teamId }` for future team-based overrides
@@ -474,7 +474,7 @@ Config.PhysicsAdvanced = {
 | 3 | Tire temperature simulation | 1 day |
 | 4 | Handling.meta tuning for sim feel (per-vehicle) | 2–3 days |
 | 5 | Integration + grip application (SetVehicleHandlingFloat / control scaling) | 1–2 days |
-| 6 | Real weather API + ambient temp sync | ✅ Renewed-Weathersync ([Renewed-Weathersync](https://github.com/Renewed-Scripts/Renewed-Weathersync)) |
+| 6 | Real weather API + ambient temp sync | ✅ jds-advanceenvironment ([Renewed-Weathersync](https://github.com/Renewed-Scripts/Renewed-Weathersync)) |
 | 7 | Optional: Tire wear, pressure simulation | 1 day |
 | 8 | Optional: Handling flags (CF_ASSIST_TRACTION_CONTROL, CF_FIX_OLD_BUGS) | 0.5 day |
 
@@ -530,7 +530,7 @@ Config.PhysicsAdvanced = {
 
 ## 15. References
 
-- [Renewed-Weathersync](https://github.com/Renewed-Scripts/Renewed-Weathersync) – weather + time sync (Phase 6)
+- [Renewed-Weathersync](https://github.com/Renewed-Scripts/Renewed-Weathersync) – weather + time sync (Phase 6, jds-advanceenvironment)
 - [GTA V Collision Material Hashes](https://gist.github.com/DurtyFree/b37463ea9bfd3089fab696f554509977)
 - [handling.meta – GTAMods Wiki](https://gtamods.com/wiki/Handling.meta)
 - [FiveM Natives](https://docs.fivem.net/natives/)

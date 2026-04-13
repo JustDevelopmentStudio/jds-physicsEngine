@@ -19,7 +19,7 @@ function GetRoadWetness()
 end
 
 local function getWeatherEntry()
-    -- Prefer Renewed-Weathersync GlobalState (server authoritative, instant sync)
+    -- Prefer jds-advanceenvironment GlobalState (server authoritative, instant sync)
     local gs = GlobalState.weather
     if gs and gs.weather then
         local byName = wcfg[gs.weather]

@@ -1,6 +1,6 @@
 --[[
     jds-resources :: weather -> road wetness & grip modifier
-    Synced with Renewed-Weathersync. Hash from GetPrevWeatherTypeHashName()
+    Synced with jds-advanceenvironment (Renewed). Hash from GetPrevWeatherTypeHashName()
     or string key when using GlobalState.weather.weather
 ]]
 Config = Config or {}
@@ -19,7 +19,7 @@ Config.Weather = {
     [0x23FB812B] = { wetness = 0.8,   gripMod = 0.40 },  -- SNOWLIGHT
     [0x27EA2814] = { wetness = 1.0,   gripMod = 0.28 },  -- BLIZZARD
     [0x10DCF4B5] = { wetness = 0.0,   gripMod = 0.98 },  -- SMOG
-    -- By string (oc-weatherSync GlobalState.weather.weather)
+    -- By string (jds-advanceenvironment GlobalState.weather.weather)
     EXTRASUNNY = { wetness = 0.0, gripMod = 1.0 },
     CLEAR = { wetness = 0.0, gripMod = 1.0 },
     CLOUDS = { wetness = 0.0, gripMod = 1.0 },

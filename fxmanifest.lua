@@ -1,11 +1,11 @@
 fx_version 'cerulean'
 game 'gta5'
 
-dependency 'Renewed-Weathersync'  -- weather + time sync for ambient temp and road wetness
+dependency 'jds-advanceenvironment'  -- weather + time sync for ambient temp and road wetness
 
 author 'Just Development Studios'
-version '1.2'
-description 'Just Development Studios - Advanced Physics Engine'
+version '2.0.0'
+description 'Just Development Studios - advanced physics engine'
 
 shared_scripts {
     'config/physics.lua',

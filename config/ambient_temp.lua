@@ -1,16 +1,16 @@
 --[[
     jds-physicsEngine :: ambient + road temperature
-    Damage sync broadcast, ambient temp (see ambient_temp.lua)
+    Climate (air) temp and local road surface temp. Used by tire temp, telemetry, etc.
 ]]
 Config = Config or {}
 Config.AmbientTemp = {
 
-    --- Derive climate temp from Renewed-Weathersync (GlobalState.weather + currentTime)
+    --- Derive climate temp from jds-advanceenvironment (GlobalState.weather + currentTime)
     fallbackFromWeather = true,
     fallbackBase = 18,         -- Base temp (°C) at noon
     fallbackSwing = 10,        -- Day/night swing (±°C from base)
 
-    --- Per-weather temp modifier (°C) - matches Renewed-Weathersync weather types
+    --- Per-weather temp modifier (°C) - matches jds-advanceenvironment weather types
     weatherTempMod = {
         EXTRASUNNY = 4,        -- Hot, clear sun
         CLEAR = 3,

@@ -1,5 +1,5 @@
 --[[
-    oc-resources :: grip application
+    jds-resources :: grip application
     Applies surface + weather + tire grip modifier to vehicle handling
 ]]
 local cfg = (Config.PhysicsAdvanced or {}).gripApplication or {}

@@ -7,7 +7,7 @@
 local res = GetCurrentResourceName()
 local WetWeatherNames = { RAIN = true, THUNDER = true, SNOW = true, XMAS = true, BLIZZARD = true }
 
---- Get server weather from Renewed-Weathersync (GlobalState)
+--- Get server weather from jds-advanceenvironment (GlobalState)
 ---@return string? weather name (e.g. "RAIN", "CLEAR")
 local function getServerWeather()
     local weather = GlobalState.weather
@@ -17,7 +17,7 @@ local function getServerWeather()
     return nil
 end
 
---- Get server time from Renewed-Weathersync (GlobalState)
+--- Get server time from jds-advanceenvironment (GlobalState)
 ---@return number hour, number minute
 local function getServerTime()
     local t = GlobalState.currentTime
@@ -111,7 +111,7 @@ exports('GetGroundGripAtPosition', function(x, y, z, roadWetness)
 end)
 
 -- ============================================================================
--- WEATHER + TIME (from Renewed-Weathersync GlobalState)
+-- WEATHER + TIME (from jds-advanceenvironment GlobalState)
 -- ============================================================================
 
 exports('GetServerWeather', getServerWeather)
@@ -197,7 +197,7 @@ exports('GetPhysicsSnapshot', function(vehicle, options)
         -- Damage (if vehicle_damage enabled)
         damage = veh and GetVehicleDamageSnapshot and GetVehicleDamageSnapshot(veh) or nil,
 
-        -- Weather + time (from Renewed-Weathersync)
+        -- Weather + time (from jds-advanceenvironment)
         weather = weather,
         hour = hour,
         minute = minute,
