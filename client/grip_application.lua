@@ -1,24 +1,59 @@
 --[[
-    jds-resources :: grip application
-    Applies surface + weather + tire grip modifier to vehicle handling
+    jds-physicsEngine :: Grip Application v2
+    ==========================================
+    COMPLETE REWRITE — Clean, predictable, linear pipeline.
+    
+    Philosophy:
+    -----------
+    1. On DRY PAVEMENT, road cars get STOCK or BETTER grip. Always. No exceptions.
+    2. Grip reductions ONLY happen from: weather, off-road surfaces, damage, mud.
+    3. The traction control in torque_simulator.lua handles wheelspin — NOT this file.
+    4. This file handles the TIRE'S ability to grip the road surface. Period.
+    
+    Pipeline (executed in order, no compounding):
+    -----------------------------------------------
+    Step 1: Calculate surface ratio (surface grip / reference = how good is this road?)
+    Step 2: Apply weather penalty (rain/snow reducing mu)
+    Step 3: Apply tire condition (temp + wear)
+    Step 4: Apply damage penalty
+    Step 5: Apply base grip multiplier (user tunable global knob)
+    Step 6: Road floor — on pavement, grip is NEVER below 1.0 (stock)
+    Step 7: Off-road / mud penalties (only for dirt/grass/sand surfaces)
+    Step 8: Write final value to vehicle handling
 ]]
+
 local cfg = (Config.PhysicsAdvanced or {}).gripApplication or {}
 local enabled = (Config.PhysicsAdvanced or {}).enabled
 local useHandlingOverride = cfg.useHandlingOverride ~= false
-local updateInterval = cfg.updateIntervalMs or 200
-local minMod = math.max(0.15, cfg.minGripModifier or 0.15)
-local tractionField = (cfg.tractionField == "fTractionLossMult") and "fTractionLossMult" or "fTractionCurveMax"
+local updateInterval = cfg.updateIntervalMs or 50
+local tractionField = "fTractionCurveMax"
 local flagsCfg = cfg.handlingFlags or {}
-local customTC = (Config.PhysicsAdvanced or {}).customTractionControl or {}
+local customTC = cfg.customTractionControl or {}
 
 local vehicleCache = {}
 
+---------------------------------------------------------------------------
+-- Utility
+---------------------------------------------------------------------------
 local function lerp(a, b, t)
-    return a + (b - a) * t
+    return a + (b - a) * math.max(0, math.min(1, t))
 end
 
-local function isHeavyOffroadClass(vc)
-    return vc == 10 or vc == 11 or vc == 17 or vc == 20
+local function clamp(val, lo, hi)
+    return math.max(lo, math.min(hi, val))
+end
+
+local function getSpeed(veh)
+    local v = GetEntityVelocity(veh)
+    if not v or not v.x then return 0 end
+    return math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
+end
+
+---------------------------------------------------------------------------
+-- Vehicle class helpers
+---------------------------------------------------------------------------
+local function isBikeClass(vc)
+    return vc == 8 or vc == 13
 end
 
 local function isOffroadClass(vc)
@@ -31,512 +66,396 @@ local function isOffroadClass(vc)
     return false
 end
 
-local function getOffroadSurfaceCategory(surfaceGrip)
-    local s = (cfg.offroad or {}).surfaces or {}
-    local p = s.paved and s.paved.maxGrip or 0.32
-    local g = s.gravel and s.gravel.maxGrip or 0.25
-    local d = s.dirt and s.dirt.maxGrip or 0.20
-    local gr = s.grass and s.grass.maxGrip or 0.19
-    if surfaceGrip > p then return "paved" end
-    if surfaceGrip > g then return "gravel" end
-    if surfaceGrip > d then return "dirt" end
-    if surfaceGrip > gr then return "grass" end
-    return "soft"
+local function isHeavyClass(vc)
+    return vc == 10 or vc == 11 or vc == 17 or vc == 20
 end
 
-local function getOffroadPreset(vehicle)
-    local oCfg = cfg.offroad or {}
-    local massHeavy = oCfg.massThresholdHeavy or 2000.0
-    local mass = GetEntityMass and GetEntityMass(vehicle)
-    if not mass then return oCfg.lightOffroad or {} end
-    return (mass >= massHeavy) and (oCfg.heavyOffroad or {}) or (oCfg.lightOffroad or {})
+local function isPavedSurface(surfaceGrip)
+    return surfaceGrip >= (cfg.pavedThreshold or 0.25)
 end
 
-local function isOnLooseSurface(surfaceGrip)
-    local s = (cfg.offroad or {}).surfaces or {}
-    local looseThresh = s.gravel and s.gravel.maxGrip or 0.28
-    return surfaceGrip < looseThresh
+---------------------------------------------------------------------------
+-- Original handling cache (stores stock values ONCE per vehicle entity)
+---------------------------------------------------------------------------
+local function cacheOriginals(veh)
+    if vehicleCache[veh] and vehicleCache[veh].origTraction then return end
+    vehicleCache[veh] = vehicleCache[veh] or {}
+    local c = vehicleCache[veh]
+    
+    local ok1, v1 = pcall(GetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveMax")
+    if ok1 and v1 and v1 > 0 then c.origTraction = v1 end
+    
+    local ok2, v2 = pcall(GetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveMin")
+    if ok2 and v2 and v2 > 0 then c.origTractionMin = v2 end
+    
+    local ok3, v3 = pcall(GetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveLateral")
+    if ok3 and v3 and v3 > 0 then c.origLateral = v3 end
+    
+    local ok4, v4 = pcall(GetVehicleHandlingFloat, veh, "CHandlingData", "fLowSpeedTractionLossMult")
+    if ok4 and v4 ~= nil then c.origLowSpeedLoss = v4 end
+    
+    local ok5, v5 = pcall(GetVehicleHandlingFloat, veh, "CHandlingData", "fMass")
+    if ok5 and v5 and v5 > 0 then c.origMass = v5 end
 end
 
-local function isOnMudSurface(surfaceGrip)
-    local mCfg = cfg.mudStuck or {}
-    if not mCfg.enabled then return false end
-    return surfaceGrip < (mCfg.surfaceGripMax or 0.17)
+---------------------------------------------------------------------------
+-- Apply final grip modifier to vehicle handling data
+---------------------------------------------------------------------------
+local function applyGrip(veh, gripMod)
+    local c = vehicleCache[veh]
+    if not c or not c.origTraction then return end
+    
+    local minFloor = cfg.minGripModifier or 0.20
+    gripMod = clamp(gripMod, minFloor, 5.0)
+    
+    pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveMax",
+        c.origTraction * gripMod)
+    
+    if cfg.applyToCurveMin and c.origTractionMin then
+        pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveMin",
+            c.origTractionMin * gripMod)
+    end
+    
+    if cfg.applyToLateral and c.origLateral then
+        pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveLateral",
+            c.origLateral * gripMod)
+    end
 end
 
-local function isOnOffroadSurface(surfaceGrip)
-    local rCfg = cfg.roadVehicleOffroad or {}
-    if not rCfg.enabled then return false end
-    return surfaceGrip < (rCfg.surfaceGripPaved or 0.30)
+local function setLowSpeedLoss(veh, mult)
+    local c = vehicleCache[veh]
+    if not c or c.origLowSpeedLoss == nil then return end
+    pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fLowSpeedTractionLossMult",
+        c.origLowSpeedLoss * mult)
 end
 
-local function getRoadVehicleOffroadGripMult(surfaceGrip)
-    local rCfg = cfg.roadVehicleOffroad or {}
-    if not rCfg.enabled then return 1.0 end
-    local paved = rCfg.surfaceGripPaved or 0.30
-    if surfaceGrip >= paved then return 1.0 end
-    local minMult = rCfg.gripMultMin or 0.35
-    local maxMult = rCfg.gripMultMax or 0.70
-    local minGrip = 0.10
-    local t = (surfaceGrip - minGrip) / (paved - minGrip)
-    t = math.max(0, math.min(1, t))
-    return minMult + (maxMult - minMult) * t
+local function setMass(veh, extraKg)
+    local c = vehicleCache[veh]
+    if not c or not c.origMass then return end
+    pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fMass", c.origMass + extraKg)
 end
 
-local function getVehiclePitchDeg(vehicle)
-    if not vehicle or not DoesEntityExist(vehicle) then return 0 end
-    local ok, pitch = pcall(GetEntityPitch, vehicle)
-    return (ok and pitch) and pitch or 0
+---------------------------------------------------------------------------
+-- Reset vehicle to stock handling
+---------------------------------------------------------------------------
+local function resetHandling(veh)
+    local c = vehicleCache[veh]
+    if not c or not DoesEntityExist(veh) then
+        vehicleCache[veh] = nil
+        return
+    end
+    if c.origTraction then
+        pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveMax", c.origTraction)
+    end
+    if c.origTractionMin then
+        pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveMin", c.origTractionMin)
+    end
+    if c.origLateral then
+        pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fTractionCurveLateral", c.origLateral)
+    end
+    if c.origLowSpeedLoss ~= nil then
+        pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fLowSpeedTractionLossMult", c.origLowSpeedLoss)
+    end
+    if c.origMass then
+        pcall(SetVehicleHandlingFloat, veh, "CHandlingData", "fMass", c.origMass)
+    end
+    if c.origHandlingFlags ~= nil then
+        pcall(SetVehicleHandlingInt, veh, "CHandlingData", "strHandlingFlags", c.origHandlingFlags)
+    end
+    vehicleCache[veh] = nil
 end
 
-local function updateMudStuckLevel(vehicle, onMud)
+---------------------------------------------------------------------------
+-- Network ownership check
+---------------------------------------------------------------------------
+local function isNetworkOwner(veh)
+    if not veh or not DoesEntityExist(veh) then return false end
+    if not NetworkGetEntityIsNetworked or not NetworkGetEntityIsNetworked(veh) then return true end
+    return NetworkGetEntityOwner(veh) == PlayerId()
+end
+
+---------------------------------------------------------------------------
+-- Handling flags (one-time apply)
+---------------------------------------------------------------------------
+local function applyHandlingFlags(veh)
+    if not flagsCfg then return end
+    local ok, h = pcall(GetVehicleHandlingInt, veh, "CHandlingData", "strHandlingFlags")
+    local ok2, a = pcall(GetVehicleHandlingInt, veh, "CCarHandlingData", "strAdvancedFlags")
+    if not ok or not ok2 then return end
+    local handling = h or 0
+    local adv = a or 0
+    if flagsCfg.rallyTyres then handling = handling | 0x8 end
+    if flagsCfg.applyTractionControl and not customTC.enabled then adv = adv | 0x2000 end
+    if flagsCfg.applyStabilityControl then adv = adv | 0x4000 end
+    if flagsCfg.fixOldBugs then adv = adv | 0x4000000 end
+    pcall(SetVehicleHandlingInt, veh, "CHandlingData", "strHandlingFlags", handling)
+    pcall(SetVehicleHandlingInt, veh, "CCarHandlingData", "strAdvancedFlags", adv)
+end
+
+---------------------------------------------------------------------------
+-- Off-road surface classification
+---------------------------------------------------------------------------
+local function getOffroadCategory(surfaceGrip)
+    if surfaceGrip > 0.30 then return "paved" end
+    if surfaceGrip > 0.22 then return "gravel" end
+    if surfaceGrip > 0.16 then return "dirt" end
+    if surfaceGrip > 0.13 then return "grass" end
+    return "mud"
+end
+
+---------------------------------------------------------------------------
+-- Mud stuck accumulator
+---------------------------------------------------------------------------
+local function updateMudLevel(veh, isMud)
     local mCfg = cfg.mudStuck or {}
     if not mCfg.enabled then return 0 end
-    vehicleCache[vehicle] = vehicleCache[vehicle] or {}
-    local cache = vehicleCache[vehicle]
-    local level = cache.mudStuckLevel or 0
-    if onMud then
-        level = math.min(1.0, level + (mCfg.buildRate or 0.015))
+    vehicleCache[veh] = vehicleCache[veh] or {}
+    local c = vehicleCache[veh]
+    local level = c.mudLevel or 0
+    if isMud then
+        level = math.min(1.0, level + (mCfg.buildRate or 0.07))
     else
-        level = math.max(0.0, level - (mCfg.decayRate or 0.03))
+        level = math.max(0.0, level - (mCfg.decayRate or 0.015))
     end
-    cache.mudStuckLevel = level
+    c.mudLevel = level
     return level
 end
 
-local function getOriginalMass(vehicle)
-    if vehicleCache[vehicle] and vehicleCache[vehicle].origMass ~= nil then
-        return vehicleCache[vehicle].origMass
-    end
-    local ok, val = pcall(GetVehicleHandlingFloat, vehicle, "CHandlingData", "fMass")
-    if ok and val and val > 0 then
-        vehicleCache[vehicle] = vehicleCache[vehicle] or {}
-        vehicleCache[vehicle].origMass = val
-        return val
-    end
-    return nil
-end
-
-local function applyExtraMass(vehicle, extraKg)
-    if not vehicle or not DoesEntityExist(vehicle) then return end
-    local orig = getOriginalMass(vehicle)
-    if not orig then return end
-    pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fMass", orig + extraKg)
-end
-
-local function getOriginalLowSpeedTraction(vehicle)
-    if vehicleCache[vehicle] and vehicleCache[vehicle].origLowSpeedTraction ~= nil then
-        return vehicleCache[vehicle].origLowSpeedTraction
-    end
-    local ok, val = pcall(GetVehicleHandlingFloat, vehicle, "CHandlingData", "fLowSpeedTractionLossMult")
-    if ok and val ~= nil then
-        vehicleCache[vehicle] = vehicleCache[vehicle] or {}
-        vehicleCache[vehicle].origLowSpeedTraction = val
-        return val
-    end
-    return nil
-end
-
-local function applyLowSpeedTractionMod(vehicle, mult)
-    if not vehicle or not DoesEntityExist(vehicle) then return end
-    local orig = getOriginalLowSpeedTraction(vehicle)
-    if not orig then return end
-    pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fLowSpeedTractionLossMult", orig * mult)
-end
-
-local function getOriginalTraction(vehicle)
-    if vehicleCache[vehicle] and vehicleCache[vehicle].origTraction then
-        return vehicleCache[vehicle].origTraction
-    end
-    local ok, val = pcall(function()
-        return GetVehicleHandlingFloat(vehicle, "CHandlingData", tractionField)
-    end)
-    if ok and val and val > 0 then
-        vehicleCache[vehicle] = vehicleCache[vehicle] or {}
-        vehicleCache[vehicle].origTraction = val
-        vehicleCache[vehicle].tractionField = tractionField
-        return val
-    end
-    return nil
-end
-
-local function getOriginalTractionCurveMin(vehicle)
-    if vehicleCache[vehicle] and vehicleCache[vehicle].origTractionCurveMin ~= nil then
-        return vehicleCache[vehicle].origTractionCurveMin
-    end
-    local ok, val = pcall(GetVehicleHandlingFloat, vehicle, "CHandlingData", "fTractionCurveMin")
-    if ok and val and val > 0 then
-        vehicleCache[vehicle] = vehicleCache[vehicle] or {}
-        vehicleCache[vehicle].origTractionCurveMin = val
-        return val
-    end
-    return nil
-end
-
-local function getOriginalTractionCurveLateral(vehicle)
-    if vehicleCache[vehicle] and vehicleCache[vehicle].origTractionCurveLateral ~= nil then
-        return vehicleCache[vehicle].origTractionCurveLateral
-    end
-    local ok, val = pcall(GetVehicleHandlingFloat, vehicle, "CHandlingData", "fTractionCurveLateral")
-    if ok and val and val > 0 then
-        vehicleCache[vehicle] = vehicleCache[vehicle] or {}
-        vehicleCache[vehicle].origTractionCurveLateral = val
-        return val
-    end
-    return nil
-end
-
-local function applyGripModifier(vehicle, effectiveGripMod, minOverride)
-    if not DoesEntityExist(vehicle) then
-        vehicleCache[vehicle] = nil
-        return
-    end
-    local floor = (minOverride ~= nil and minOverride >= 0) and minOverride or minMod
-    effectiveGripMod = math.max(floor, math.min(1.0, effectiveGripMod))
-    local orig = getOriginalTraction(vehicle)
-    if not orig then return end
-    local newVal = orig * effectiveGripMod
-    pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", tractionField, newVal)
-    if cfg.applyToCurveMin then
-        local origMin = getOriginalTractionCurveMin(vehicle)
-        if origMin then
-            pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fTractionCurveMin", origMin * effectiveGripMod)
-        end
-    end
-    -- Lateral (cornering) grip: reduces spinout when steering at speed
-    if cfg.applyToLateral then
-        local origLat = getOriginalTractionCurveLateral(vehicle)
-        if origLat then
-            pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fTractionCurveLateral", origLat * effectiveGripMod)
-        end
-    end
-end
-
-local function resetVehicleHandling(vehicle)
-    local c = vehicleCache[vehicle]
-    if c and DoesEntityExist(vehicle) then
-        if c.origTraction then
-            pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", c.tractionField or tractionField, c.origTraction)
-        end
-        if c.origTractionCurveMin and cfg.applyToCurveMin then
-            pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fTractionCurveMin", c.origTractionCurveMin)
-        end
-        if c.origTractionCurveLateral and cfg.applyToLateral then
-            pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fTractionCurveLateral", c.origTractionCurveLateral)
-        end
-        if c.origLowSpeedTraction ~= nil then
-            pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fLowSpeedTractionLossMult", c.origLowSpeedTraction)
-        end
-        if c.origHandlingFlags ~= nil then
-            pcall(SetVehicleHandlingInt, vehicle, "CHandlingData", "strHandlingFlags", c.origHandlingFlags)
-        end
-        if c.origMass ~= nil then
-            pcall(SetVehicleHandlingFloat, vehicle, "CHandlingData", "fMass", c.origMass)
-        end
-    end
-    vehicleCache[vehicle] = nil
-end
-
-local function isNetworkOwner(vehicle)
-    if not vehicle or not DoesEntityExist(vehicle) then return false end
-    if not NetworkGetEntityIsNetworked or not NetworkGetEntityIsNetworked(vehicle) then return true end
-    return NetworkGetEntityOwner(vehicle) == PlayerId()
-end
-
-local function applyHandlingFlags(vehicle)
-    if not flagsCfg or not DoesEntityExist(vehicle) then return end
-    local ok, intHandling = pcall(GetVehicleHandlingInt, vehicle, "CHandlingData", "strHandlingFlags")
-    local okAdv, intAdv = pcall(GetVehicleHandlingInt, vehicle, "CCarHandlingData", "strAdvancedFlags")
-    if not ok or not okAdv then return end
-    local handling = intHandling or 0
-    local adv = intAdv or 0
-    if flagsCfg.rallyTyres then handling = handling | 0x8 end
-    if flagsCfg.applyTractionControl and not (customTC.enabled) then adv = adv | 0x2000 end
-    if flagsCfg.applyStabilityControl then adv = adv | 0x4000 end
-    if flagsCfg.fixOldBugs then adv = adv | 0x4000000 end
-    pcall(SetVehicleHandlingInt, vehicle, "CHandlingData", "strHandlingFlags", handling)
-    pcall(SetVehicleHandlingInt, vehicle, "CCarHandlingData", "strAdvancedFlags", adv)
-end
-
+---------------------------------------------------------------------------
+-- MAIN GRIP LOOP
+---------------------------------------------------------------------------
 CreateThread(function()
     if not enabled then return end
     local lastVeh = 0
+    
     while true do
         Wait(updateInterval)
         local ped = PlayerPedId()
+        
+        -- Not in vehicle: reset everything
         if not IsPedInAnyVehicle(ped, false) then
             if lastVeh ~= 0 then
-                resetVehicleHandling(lastVeh)
+                resetHandling(lastVeh)
                 if RestoreDamagePerformance then RestoreDamagePerformance(lastVeh) end
                 lastVeh = 0
             end
             if ResetTireTemp then ResetTireTemp() end
             if ResetTireWear then ResetTireWear() end
+            goto continue
+        end
+        
+        local veh = GetVehiclePedIsIn(ped, false)
+        if GetPedInVehicleSeat(veh, -1) ~= ped then goto continue end
+        
+        -- Lost network ownership: bail
+        if lastVeh == veh and not isNetworkOwner(veh) then
+            resetHandling(veh)
+            if RestoreDamagePerformance then RestoreDamagePerformance(veh) end
+            lastVeh = 0
+            goto continue
+        end
+        lastVeh = veh
+        
+        -- Cache stock handling values (only runs once per entity)
+        cacheOriginals(veh)
+        
+        -- Update systems
+        UpdateRoadWetness()
+        UpdateTireTemp(veh)
+        
+        -- Gather data
+        local vc = GetVehicleClass(veh)
+        local surfaceGrip = GetVehicleGroundGrip(veh, GetRoadWetness())
+        local weatherMod = GetWeatherGripModifier()
+        local isBike = isBikeClass(vc)
+        local isOffroad = isOffroadClass(vc)
+        local speedMps = getSpeed(veh)
+        local paved = isPavedSurface(surfaceGrip)
+        
+        ---------------------------------------------------------------
+        -- STEP 1: Surface ratio
+        -- On dry tarmac (0.33), with reference 0.33, this = 1.0
+        -- Anything above tarmac > 1.0, anything below < 1.0
+        ---------------------------------------------------------------
+        local surfRef = cfg.surfaceGripReference or 0.33
+        local surfaceMod = surfaceGrip / surfRef
+        
+        ---------------------------------------------------------------
+        -- STEP 2: Weather
+        ---------------------------------------------------------------
+        -- weatherMod is already 0.0-1.0 from weather system
+        
+        ---------------------------------------------------------------
+        -- STEP 3: Tire condition
+        -- On pavement, skip cold penalty entirely (cars should grip cold)
+        ---------------------------------------------------------------
+        local tireMod = 1.0
+        if isBike and cfg.skipBikeTireTemp then
+            tireMod = 1.0
+        elseif paved and speedMps < 20 then
+            tireMod = 1.0  -- No cold penalty on roads
         else
-            local veh = GetVehiclePedIsIn(ped, false)
-            if GetPedInVehicleSeat(veh, -1) ~= ped then goto continue end
-
-            -- Restore handling if we lost network ownership (e.g. another player took over)
-            if lastVeh == veh and not isNetworkOwner(veh) then
-                resetVehicleHandling(veh)
-                if RestoreDamagePerformance then RestoreDamagePerformance(veh) end
-                lastVeh = 0
-                goto continue
+            tireMod = GetTireGripModifier and GetTireGripModifier() or 1.0
+        end
+        
+        ---------------------------------------------------------------
+        -- STEP 4: Damage
+        ---------------------------------------------------------------
+        local damageMod = GetDamageGripModifier and GetDamageGripModifier(veh) or 1.0
+        
+        ---------------------------------------------------------------
+        -- STEP 5: Combine + base multiplier
+        ---------------------------------------------------------------
+        local baseMult = cfg.baseGripMult or 1.25
+        local effectiveMod = surfaceMod * weatherMod * tireMod * damageMod * baseMult
+        
+        ---------------------------------------------------------------
+        -- STEP 6: ROAD FLOOR — prevent compounding bugs
+        -- On paved road, grip never drops below baseGripMult.
+        -- This prevents weather/tire/damage from accidentally zeroing grip,
+        -- but still respects the user's chosen baseGripMult tuning.
+        ---------------------------------------------------------------
+        if paved and not isOffroad then
+            effectiveMod = math.max(baseMult, effectiveMod)
+        end
+        
+        ---------------------------------------------------------------
+        -- STEP 7: Aero downforce (speed-based grip bonus)
+        ---------------------------------------------------------------
+        local aero = cfg.aeroDownforce or {}
+        if not isOffroad and not isBike and aero.enabled then
+            if speedMps >= (aero.speedMpsMin or 15) and paved then
+                local spdMin = aero.speedMpsMin or 15
+                local spdMax = aero.speedMpsMax or 55
+                local t = clamp((speedMps - spdMin) / math.max(1, spdMax - spdMin), 0, 1)
+                local boost = (aero.gripBoostMax or 0.15) * t
+                effectiveMod = effectiveMod + boost
             end
-            lastVeh = veh
-
-            UpdateRoadWetness()
-            UpdateTireTemp(veh)
-
-            local vc = GetVehicleClass(veh)
-            local surfaceGrip = GetVehicleGroundGrip(veh, GetRoadWetness())
-            local weatherMod = GetWeatherGripModifier()
-            local isBike = (vc == 8 or vc == 13)
-            local isOffroad = isOffroadClass(vc)
-
-            -- Tire modifier: skip cold penalty for bikes, off-road, and road cars at launch
-            local tireMod
-            if isBike and cfg.skipBikeTireTemp then
-                tireMod = 1.0
-            elseif not isOffroad then
-                local launchCfg = cfg.roadLaunchGrip or {}
-                local rrg = cfg.realisticRoadGrip or {}
-                local vx, vy, vz = GetEntityVelocity(veh)
-                local speedMps = (vx and vy and vz) and math.sqrt(vx*vx + vy*vy + vz*vz) or 0
-                local tireSkipSpeed = math.max(launchCfg.speedMps or 18, rrg.speedMps or 0)
-                if (launchCfg.enabled or rrg.enabled) and speedMps < tireSkipSpeed
-                    and surfaceGrip >= (launchCfg.surfaceGripMin or rrg.surfaceGripMin or 0.26) then
-                    tireMod = 1.0  -- full grip on pavement (skip cold penalty in realistic zone)
-                else
-                    tireMod = GetTireGripModifier and GetTireGripModifier() or 1.0
-                end
-            elseif isOffroad then
-                local preset = getOffroadPreset(veh)
-                tireMod = (preset and preset.skipTireTempPenalty) and 1.0 or (GetTireGripModifier and GetTireGripModifier() or 1.0)
-            else
-                tireMod = GetTireGripModifier and GetTireGripModifier() or 1.0
-            end
-            local damageMod = GetDamageGripModifier and GetDamageGripModifier(veh) or 1.0
-
-            -- Scale surface grip to 0-1: dry tarmac (0.36) = 1.0, wet/ice = lower
-            local surfaceRef = cfg.surfaceGripReference or 0.36
-            local surfaceMod = math.min(1.0, surfaceGrip / surfaceRef)
-            local effectiveMod = surfaceMod * weatherMod * tireMod * damageMod
-
-            -- Realistic road grip: full stock handling on dry pavement at normal driving speeds
-            local rrg = cfg.realisticRoadGrip or {}
-            if not isOffroad and not isBike and rrg.enabled then
-                local vx, vy, vz = GetEntityVelocity(veh)
-                local speedMps = (vx and vy and vz) and math.sqrt(vx*vx + vy*vy + vz*vz) or 0
-                if speedMps < (rrg.speedMps or 45) and surfaceGrip >= (rrg.surfaceGripMin or 0.28)
-                    and weatherMod >= (rrg.weatherGripMin or 0.92) and (not damageMod or damageMod >= 0.98) then
-                    effectiveMod = 1.0  -- full grip, no reduction (realistic dry pavement)
-                end
-            end
-
-            -- Aero downforce: cars in motion stay in motion, less spinout when steering at speed
-            local aero = cfg.aeroDownforce or {}
-            if not isOffroad and not isBike and aero.enabled then
-                local vx, vy, vz = GetEntityVelocity(veh)
-                local speedMps = (vx and vy and vz) and math.sqrt(vx*vx + vy*vy + vz*vz) or 0
-                if speedMps >= (aero.speedMpsMin or 15) and surfaceGrip >= (aero.surfaceGripMin or 0.28) then
-                    local spdMin, spdMax = aero.speedMpsMin or 15, aero.speedMpsMax or 55
-                    local t = math.min(1.0, (speedMps - spdMin) / math.max(1, spdMax - spdMin))
-                    local boost = (aero.gripBoostMax or 0.12) * t
-                    effectiveMod = math.min(1.0, effectiveMod + boost)
-                end
-            end
-
-            -- Road cars at low speed on pavement: grip floor + keyboard compensation
-            if not isOffroad and not isBike then
-                local vx, vy, vz = GetEntityVelocity(veh)
-                local speedMps = (vx and vy and vz) and math.sqrt(vx*vx + vy*vy + vz*vz) or 0
-                local lc = cfg.roadLaunchGrip or {}
-                if lc.enabled and speedMps < (lc.speedMps or 15) and surfaceGrip >= (lc.surfaceGripMin or 0.25) then
-                    local gripFloor = lc.gripFloor or 0.95
-                    local tractionMult = lc.lowSpeedTractionMult or 0.5
-                    -- Keyboard compensation: high throttle at launch = can't modulate (binary 0/100%)
-                    local kc = lc.keyboardLaunchCompensation or {}
-                    if kc.enabled then
-                        local throttle = GetControlNormal(0, 71) or 0
-                        if throttle >= (kc.throttleThreshold or 0.82) then
-                            gripFloor = kc.gripFloor or 1.0
-                            tractionMult = kc.lowSpeedTractionMult or 0.35
-                        end
-                    end
-                    effectiveMod = math.max(effectiveMod, gripFloor)
-                    -- Apply low-speed traction in the road-on-pavement block below (we pass via cache for this tick)
-                    vehicleCache[veh] = vehicleCache[veh] or {}
-                    vehicleCache[veh]._keyboardLaunchTractionMult = tractionMult
-                else
-                    if vehicleCache[veh] then vehicleCache[veh]._keyboardLaunchTractionMult = nil end
-                end
-                if vehicleCache[veh] then vehicleCache[veh].lastEffectiveGrip = nil end
-            end
-
-            -- Off-road (class 9): SnowRunner difficulty
+        end
+        
+        ---------------------------------------------------------------
+        -- STEP 8: Bikes get a flat grip boost
+        ---------------------------------------------------------------
+        if isBike and cfg.bikeGripModifier and cfg.bikeGripModifier > 1.0 then
+            effectiveMod = effectiveMod * cfg.bikeGripModifier
+        end
+        
+        ---------------------------------------------------------------
+        -- STEP 9: Off-road surface penalties
+        -- Only kicks in when driving on actual dirt/grass/mud
+        ---------------------------------------------------------------
+        if not paved then
             if isOffroad then
+                -- Off-road vehicles: moderate penalty
                 local oCfg = cfg.offroad or {}
                 local surfMod = oCfg.surfaceGripMod or {}
-                local category = getOffroadSurfaceCategory(surfaceGrip)
-                effectiveMod = effectiveMod * (surfMod[category] or 1.0)
-                local preset = getOffroadPreset(veh)
-                if preset.gripFloorOnLoose and isOnLooseSurface(surfaceGrip) then
-                    effectiveMod = math.max(effectiveMod, preset.gripFloorOnLoose)
-                end
-                if preset.gripCap then
-                    effectiveMod = math.min(effectiveMod, preset.gripCap)
-                end
-                if preset.massScale then
-                    effectiveMod = lerp(1.0, effectiveMod, preset.massScale)
-                end
-                -- Hill penalty: climbing on loose surfaces (SnowRunner style)
+                local cat = getOffroadCategory(surfaceGrip)
+                effectiveMod = effectiveMod * (surfMod[cat] or 1.0)
+                
+                -- Hill penalty on loose surfaces
                 local hillCfg = oCfg.hillPenalty or {}
-                if hillCfg.enabled ~= false and isOnLooseSurface(surfaceGrip) then
-                    local pitch = getVehiclePitchDeg(veh)
-                    if pitch > (hillCfg.pitchDeg or 5) then
+                if hillCfg.enabled ~= false then
+                    local ok, pitch = pcall(GetEntityPitch, veh)
+                    if ok and pitch and pitch > (hillCfg.pitchDeg or 5) then
                         effectiveMod = effectiveMod * (hillCfg.gripMult or 0.60)
                     end
                 end
-                if preset.lowSpeedTractionMult then
-                    local mult = (category == "paved") and 1.0 or preset.lowSpeedTractionMult
-                    applyLowSpeedTractionMod(veh, mult)
-                end
-                if preset.rallyTyres then
-                    vehicleCache[veh] = vehicleCache[veh] or {}
-                    if not vehicleCache[veh].rallyApplied then
-                        local ok, h = pcall(GetVehicleHandlingInt, veh, "CHandlingData", "strHandlingFlags")
-                        if ok and h then
-                            vehicleCache[veh].origHandlingFlags = h
-                            pcall(SetVehicleHandlingInt, veh, "CHandlingData", "strHandlingFlags", h | 0x8)
-                            vehicleCache[veh].rallyApplied = true
-                        end
-                    end
-                end
-                local ls = preset.launchSmoothing
-                if ls then
-                    local v = GetEntityVelocity(veh)
-                    local speedMps = (v and v.x) and math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) or 0
-                    if speedMps < (ls.speedMps or 5.0) then
-                        local cache = vehicleCache[veh] or {}
-                        effectiveMod = lerp(cache.lastEffectiveGrip or effectiveMod, effectiveMod, ls.lerp or 0.35)
-                        cache.lastEffectiveGrip = effectiveMod
-                        vehicleCache[veh] = cache
-                    end
-                end
-            -- Bikes get extra grip boost
-            elseif isBike and cfg.bikeGripModifier and cfg.bikeGripModifier > 1.0 then
-                effectiveMod = math.min(1.0, effectiveMod * cfg.bikeGripModifier)
-            -- Heavy vehicles (industrial, utility, service, commercial)
-            elseif isHeavyOffroadClass(vc) then
-                local classCaps = cfg.classGripCap
-                if classCaps and classCaps[vc] then
-                    effectiveMod = math.min(effectiveMod, classCaps[vc])
-                end
-                if cfg.heavyMass then
-                    local mass = GetEntityMass and GetEntityMass(veh) or nil
-                    if mass and mass > (cfg.heavyMass.threshold or 2200.0) then
-                        local scale = cfg.heavyMass.scale or 0.9
-                        effectiveMod = lerp(1.0, effectiveMod, scale)
-                    end
-                end
-                local ls = cfg.launchSmoothing
-                if ls then
-                    local v = GetEntityVelocity(veh)
-                    local speedMps = (v and v.x) and math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) or 0
-                    local cache = vehicleCache[veh] or {}
-                    if speedMps < (ls.speedMps or 5.0) then
-                        effectiveMod = lerp(cache.lastEffectiveGrip or effectiveMod, effectiveMod, ls.lerp or 0.35)
-                    end
-                    cache.lastEffectiveGrip = effectiveMod
-                    vehicleCache[veh] = cache
-                end
-            end
-
-            -- Road vehicles off-road: SnowRunner struggle on dirt, gravel, hills, mud
-            local mudMinGrip = nil
-            if not isOffroad then
+            elseif not isBike then
+                -- Road cars on dirt: severe penalty
                 local rCfg = cfg.roadVehicleOffroad or {}
-                local onOffroad = isOnOffroadSurface(surfaceGrip)
-                if onOffroad and rCfg.enabled then
-                    local gripMult = getRoadVehicleOffroadGripMult(surfaceGrip)
-                    effectiveMod = effectiveMod * gripMult
-                    local pitch = getVehiclePitchDeg(veh)
-                    if pitch > (rCfg.hillPitchDeg or 6) then
-                        effectiveMod = effectiveMod * (rCfg.hillGripMult or 0.55)
-                    end
-                    applyLowSpeedTractionMod(veh, rCfg.lowSpeedTractionMult or 2.2)
-                else
-                    -- On pavement: reduce low-speed wheelspin at launch
-                    local lc = cfg.roadLaunchGrip or {}
-                    local vx, vy, vz = GetEntityVelocity(veh)
-                    local spd = (vx and vy and vz) and math.sqrt(vx*vx + vy*vy + vz*vz) or 0
-                    if lc.enabled and spd < (lc.speedMps or 22) and surfaceGrip >= (lc.surfaceGripMin or 0.26) then
-                        local mult = lc.lowSpeedTractionMult or 0.5
-                        -- Use keyboard compensation value if set (high throttle at launch)
-                        local cache = vehicleCache[veh]
-                        if cache and cache._keyboardLaunchTractionMult then
-                            mult = cache._keyboardLaunchTractionMult
-                        end
-                        applyLowSpeedTractionMod(veh, mult)
-                    else
-                        applyLowSpeedTractionMod(veh, 1.0)
+                if rCfg.enabled then
+                    local pavedThresh = rCfg.surfaceGripPaved or 0.30
+                    local minMult = rCfg.gripMultMin or 0.18
+                    local maxMult = rCfg.gripMultMax or 0.45
+                    local t = clamp((surfaceGrip - 0.10) / (pavedThresh - 0.10), 0, 1)
+                    local offMult = minMult + (maxMult - minMult) * t
+                    effectiveMod = effectiveMod * offMult
+                    
+                    -- Hill penalty
+                    local ok, pitch = pcall(GetEntityPitch, veh)
+                    if ok and pitch and pitch > (rCfg.hillPitchDeg or 4) then
+                        effectiveMod = effectiveMod * (rCfg.hillGripMult or 0.35)
                     end
                 end
             end
-
-            -- Mud/Marsh/Sand: SnowRunner sink (road + off-road when enabled)
-            local mCfg = cfg.mudStuck or {}
-            local onMud = isOnMudSurface(surfaceGrip)
-            local mudLevel = updateMudStuckLevel(veh, onMud)
-            if mudLevel > 0 and mCfg.enabled then
-                local mudScale = 1.0
-                if isOffroad then
-                    mudScale = mCfg.applyToOffroad and (mCfg.offroadMult or 0.6) or 0
-                end
-                if mudScale > 0 then
-                    local mult = 1.0 - (mudLevel * (mCfg.maxGripMult or 0.75) * mudScale)
-                    effectiveMod = effectiveMod * math.max(0.04, mult)
-                    mudMinGrip = mCfg.minGripWhenStuck or 0.08
-                    if isNetworkOwner(veh) then
-                        local extraKg = mudLevel * (mCfg.maxExtraMassKg or 600) * mudScale
-                        applyExtraMass(veh, extraKg)
-                    end
-                elseif isNetworkOwner(veh) then
-                    applyExtraMass(veh, 0)
-                end
-            elseif isNetworkOwner(veh) then
-                applyExtraMass(veh, 0)
-            end
-
-            -- Base grip mult: slightly lower for realism (weight/mass feels more)
-            local baseMult = cfg.baseGripMult or 1.0
-            effectiveMod = effectiveMod * baseMult
-
-            if useHandlingOverride and isNetworkOwner(veh) then
-                applyGripModifier(veh, effectiveMod, mudMinGrip)
-            end
-            if ApplyDamagePerformance and isNetworkOwner(veh) then
-                ApplyDamagePerformance(veh)
-            end
-            local wantFlags = flagsCfg and (flagsCfg.applyTractionControl or flagsCfg.applyStabilityControl or flagsCfg.fixOldBugs or flagsCfg.rallyTyres)
-            if wantFlags then
-                vehicleCache[veh] = vehicleCache[veh] or {}
-                if not vehicleCache[veh].flagsApplied then
-                    applyHandlingFlags(veh)
-                    vehicleCache[veh].flagsApplied = true
-                end
-            end
-            ::continue::
         end
+        
+        ---------------------------------------------------------------
+        -- STEP 10: Mud stuck simulation
+        ---------------------------------------------------------------
+        local mCfg = cfg.mudStuck or {}
+        local isMud = mCfg.enabled and surfaceGrip < (mCfg.surfaceGripMax or 0.20)
+        local mudLevel = updateMudLevel(veh, isMud)
+        
+        if mudLevel > 0 and mCfg.enabled and isNetworkOwner(veh) then
+            local mudScale = isOffroad and (mCfg.offroadMult or 0.6) or 1.0
+            local gripLoss = mudLevel * (mCfg.maxGripMult or 0.92) * mudScale
+            effectiveMod = effectiveMod * math.max(0.04, 1.0 - gripLoss)
+            setMass(veh, mudLevel * (mCfg.maxExtraMassKg or 200) * mudScale)
+        elseif isNetworkOwner(veh) then
+            setMass(veh, 0)
+        end
+        
+        ---------------------------------------------------------------
+        -- STEP 11: Low-speed traction loss management
+        -- On pavement: REDUCE fLowSpeedTractionLossMult to help launch
+        -- Off road: INCREASE it to simulate slippery surfaces
+        ---------------------------------------------------------------
+        if isNetworkOwner(veh) then
+            if paved and not isOffroad and not isBike then
+                -- On pavement, reduce traction loss so the car hooks up
+                local lossReduction = cfg.pavementLowSpeedLossMult or 0.40
+                setLowSpeedLoss(veh, lossReduction)
+            elseif not paved and not isOffroad then
+                -- Road car on dirt: increase loss
+                local rCfg = cfg.roadVehicleOffroad or {}
+                setLowSpeedLoss(veh, rCfg.lowSpeedTractionMult or 3.5)
+            else
+                setLowSpeedLoss(veh, 1.0)
+            end
+        end
+        
+        ---------------------------------------------------------------
+        -- STEP 12: Hydroplaning (wet road, high speed = random grip loss)
+        ---------------------------------------------------------------
+        local wetLevel = GetRoadWetness and GetRoadWetness() or 0
+        if wetLevel > 0.35 and speedMps > 38.0 then
+            local riskFactor = (speedMps - 38.0) * wetLevel * 0.015
+            if math.random() < riskFactor then
+                effectiveMod = 0.08
+            end
+        end
+        
+        ---------------------------------------------------------------
+        -- FINAL: Write to vehicle
+        ---------------------------------------------------------------
+        if useHandlingOverride and isNetworkOwner(veh) then
+            applyGrip(veh, effectiveMod)
+        end
+        
+        if ApplyDamagePerformance and isNetworkOwner(veh) then
+            ApplyDamagePerformance(veh)
+        end
+        
+        -- One-time handling flags
+        vehicleCache[veh] = vehicleCache[veh] or {}
+        if not vehicleCache[veh].flagsApplied then
+            applyHandlingFlags(veh)
+            vehicleCache[veh].flagsApplied = true
+        end
+        
+        ::continue::
     end
 end)
 
+---------------------------------------------------------------------------
+-- Cleanup on resource stop
+---------------------------------------------------------------------------
 AddEventHandler("onResourceStop", function(name)
     if GetCurrentResourceName() ~= name then return end
     for veh, _ in pairs(vehicleCache) do
         if DoesEntityExist(veh) then
-            resetVehicleHandling(veh)
+            resetHandling(veh)
             if RestoreDamagePerformance then RestoreDamagePerformance(veh) end
         end
     end

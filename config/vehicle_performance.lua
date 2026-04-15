@@ -48,13 +48,13 @@ Config.VehiclePerformance = {
         corneringSteerThreshold = 0.25, -- min steer to trigger
 
         -- Brake dive: front toe/camber under braking (weight transfers forward)
-        brakeToeFront = 0.03,           -- stronger dive feel
-        brakeCamberFront = -0.04,
-        brakeThreshold = 0.35,
+        brakeToeFront = 0.05,           -- Stronger dynamic dive feel
+        brakeCamberFront = -0.06,
+        brakeThreshold = 0.25,          -- lower threshold so dive happens on trail braking
 
         -- Brake weight transfer: shift grip to front when braking (rear gets light)
-        brakeTractionBiasShift = 0.10,  -- up to 10% more front grip when braking hard
-        brakeAndSteerExtra = 0.04,      -- extra shift when trail braking (brake + turn)
+        brakeTractionBiasShift = 0.15,  -- up to 15% more front grip when braking hard (drifting initiator)
+        brakeAndSteerExtra = 0.06,      -- extra shift when trail braking (brake + turn)
 
         -- Acceleration squat: rear toe/camber under throttle
         accelToeRear = 0.015,
@@ -63,9 +63,9 @@ Config.VehiclePerformance = {
 
         -- Steering: dynamic lock based on speed (lerp, no flat base)
         speedSteerReduction = true,
-        steerAtLowSpeed = 0.88,        -- multiplier at 0 m/s (nearly full lock, tight parking)
-        steerAtHighSpeed = 0.28,       -- multiplier at speedForMax (heavy, resistant)
-        speedForMaxReduction = 38,     -- m/s (~85 mph) - speed where min steering reached
+        steerAtLowSpeed = 1.0,         -- full lock at 0 m/s for sharp parking
+        steerAtHighSpeed = 0.48,       -- increased from 0.28 to allow for sharp high-speed racing lines
+        speedForMaxReduction = 55,     -- m/s (~123 mph) - speed where min steering reached
     },
 
     --- Body damage → steering (bent steering linkage)

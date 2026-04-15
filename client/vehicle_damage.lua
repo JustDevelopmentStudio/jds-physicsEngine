@@ -146,6 +146,13 @@ CreateThread(function()
             local speed = getEntitySpeedMps(veh)
             local now = GetGameTimer()
 
+            local engineHealth = GetVehicleEngineHealth(veh) or 1000
+            if state.lastEngineHealth and engineHealth > state.lastEngineHealth + 200 then
+                 -- Admin physically repaired the vehicle. Make sure we remove the 'broken' block!
+                 pcall(SetVehicleUndriveable, veh, false)
+            end
+            state.lastEngineHealth = engineHealth
+
             if state.prevSpeed then
                 local delta = state.prevSpeed - speed
                 local lastImpact = lastImpactTime[veh] or 0
@@ -184,7 +191,22 @@ CreateThread(function()
                 local rpm = GetVehicleCurrentRpm(veh) or 0
                 local redline = envCfg.redlineRpm or 0.9
                 local cooldown = (envCfg.overheatCooldownSec or 2) * 1000
-                if rpm >= redline then
+                
+                -- High-speed airflow cooling logic
+                -- Convert m/s speed to mph
+                local mph = speed * 2.23694
+                local isCooling = false
+                
+                -- Sports(6) and Supers(7) have much better high-speed radiator aerodynamic flow
+                local vehicleClass = GetVehicleClass(veh)
+                local coolingSpeed = (vehicleClass == 6 or vehicleClass == 7) and 60.0 or 45.0
+                
+                -- If we are driving fast enough, the radiator forces air through the engine, preventing overheating
+                if mph > coolingSpeed then
+                    isCooling = true
+                end
+
+                if rpm >= redline and not isCooling then
                     redlineStartTime[veh] = redlineStartTime[veh] or now
                     local elapsed = now - (redlineStartTime[veh] or now)
                     if elapsed >= cooldown then
@@ -197,16 +219,64 @@ CreateThread(function()
                             local netId = NetworkGetNetworkIdFromEntity(veh)
                             if netId and netId > 0 then
                                 local _, body = pcall(GetVehicleBodyHealth, veh)
-                        TriggerServerEvent("jds-physicsEngine:damageApplied", netId, newEng, body or 1000)
+                                TriggerServerEvent("jds-physicsEngine:damageApplied", netId, newEng, body or 1000)
                             end
                         end
                     end
                 else
+                    -- Not redlining or we are currently cooling via airflow
                     redlineStartTime[veh] = nil
                 end
             end
 
+            -- Deep Damage Mechanics: Suspension & Transmissions
             local v = GetEntityVelocity(veh)
+            -- Track previous vertical velocity to detect heavy landings
+            local vz = v and v.z or 0
+            if state.prevVel and state.prevVel.z then
+                local deltaZ = state.prevVel.z - vz
+                -- If we were falling extremely fast (-15 m/s) and suddenly stopped falling (hit the ground)
+                if state.prevVel.z < -15.0 and deltaZ < -15.0 then
+                    -- Massive bottom-out!
+                    local severity = math.abs(state.prevVel.z) / 15.0
+                    local suspDmg = 50 * severity
+                    local okB, curB = pcall(GetVehicleBodyHealth, veh)
+                    if okB and curB then
+                        local newBody = math.max(0, curB - suspDmg)
+                        pcall(SetVehicleBodyHealth, veh, newBody)
+                        -- Cause erratic traction issues from broken tie rods/suspension arms
+                        if SetVehicleWheelHealth then
+                            pcall(SetVehicleWheelHealth, veh, 0, math.max(0, (GetVehicleWheelHealth(veh, 0) or 1000) - (100 * severity)))
+                            pcall(SetVehicleWheelHealth, veh, 1, math.max(0, (GetVehicleWheelHealth(veh, 1) or 1000) - (100 * severity)))
+                        end
+                    end
+                end
+            end
+
+            -- Transmission Damage (Money-Shift)
+            local gear = GetVehicleCurrentGear(veh) or 1
+            local mph = speed * 2.23694
+            local rpm = GetVehicleCurrentRpm(veh) or 0
+            if gear > 0 and rpm >= 0.98 then
+                -- Define max speeds per gear to detect a forced downshift over-rev
+                local maxGearSpeeds = { [1] = 55, [2] = 85, [3] = 135 }
+                local limit = maxGearSpeeds[gear]
+                if limit and mph > limit then
+                    -- User money-shifted! Massive immediate engine damage
+                    local okE, curE = pcall(GetVehicleEngineHealth, veh)
+                    if okE and curE and curE > -4000 then
+                        local dmg = 150 * (mph / limit)  -- Scales damage based on how bad the money shift was
+                        local newE = math.max(-4000, curE - dmg)
+                        pcall(SetVehicleEngineHealth, veh, newE)
+                        -- Trigger particle/audio effects via sync if possible, or just kill the engine
+                        local netId = NetworkGetNetworkIdFromEntity(veh)
+                        if netId and netId > 0 then
+                            TriggerServerEvent("jds-physicsEngine:damageApplied", netId, newE, GetVehicleBodyHealth(veh) or 1000)
+                        end
+                    end
+                end
+            end
+
             state.prevVel = v and { x = v.x, y = v.y, z = v.z } or state.prevVel
             state.prevSpeed = speed
             vehicleState[veh] = state

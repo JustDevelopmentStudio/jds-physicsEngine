@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JDS Physics Telemetry</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="telemetry-container" class="hidden">
+        <div class="glass-panel">
+            <div class="header">
+                <h2>TELEMETRY <span id="page-indicator">1 / 3</span></h2>
+                <div class="category-title" id="category-title">TIRES & SUSPENSION</div>
+            </div>
+
+            <!-- PAGE 1: TIRES & SUSPENSION -->
+            <div id="page-1" class="page active">
+                <div class="car-diagram">
+                    <div class="axle front-axle">
+                        <div class="wheel-box">
+                            <div class="temp-label" id="temp-fl">20°C</div>
+                            <div class="tire" id="tire-fl"></div>
+                            <div class="bar-container"><div class="bar susp-bar" id="susp-fl"></div></div>
+                        </div>
+                        <div class="wheel-box">
+                            <div class="temp-label" id="temp-fr">20°C</div>
+                            <div class="tire" id="tire-fr"></div>
+                            <div class="bar-container"><div class="bar susp-bar" id="susp-fr"></div></div>
+                        </div>
+                    </div>
+                    <div class="axle rear-axle">
+                        <div class="wheel-box">
+                            <div class="temp-label" id="temp-rl">20°C</div>
+                            <div class="tire" id="tire-rl"></div>
+                            <div class="bar-container"><div class="bar susp-bar" id="susp-rl"></div></div>
+                        </div>
+                        <div class="wheel-box">
+                            <div class="temp-label" id="temp-rr">20°C</div>
+                            <div class="tire" id="tire-rr"></div>
+                            <div class="bar-container"><div class="bar susp-bar" id="susp-rr"></div></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="stats-row">
+                    <div class="stat-col">
+                        <span class="label">Tire Degradation</span>
+                        <div class="progress-bg"><div class="progress-fill" id="wear-bar"></div></div>
+                        <span class="value" id="wear-val">0%</span>
+                    </div>
+                    <div class="stat-col">
+                        <span class="label">Steering Angle</span>
+                        <span class="value" id="steer-val">0.0°</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PAGE 2: ENGINE & POWER -->
+            <div id="page-2" class="page hidden">
+                <div class="data-grid">
+                    <div class="data-card">
+                        <span class="label">GEAR</span>
+                        <span class="value highlight" id="gear-val">N</span>
+                    </div>
+                    <div class="data-card">
+                        <span class="label">RPM</span>
+                        <span class="value" id="rpm-val">0</span>
+                    </div>
+                    <div class="data-card">
+                        <span class="label">SPEED</span>
+                        <span class="value" id="speed-val">0 <small>MPH</small></span>
+                    </div>
+                </div>
+                
+                <div class="pedal-inputs">
+                    <div class="input-row">
+                        <span class="input-label">THR</span>
+                        <div class="input-bar-bg"><div class="input-bar-fill throttle" id="throttle-bar"></div></div>
+                    </div>
+                    <div class="input-row">
+                        <span class="input-label">BRK</span>
+                        <div class="input-bar-bg"><div class="input-bar-fill brake" id="brake-bar"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PAGE 3: G-FORCE & DYNAMICS -->
+            <div id="page-3" class="page hidden">
+                <div class="g-force-container">
+                    <div class="g-force-circle">
+                        <div class="g-force-bound"></div>
+                        <div class="g-force-crosshair-v"></div>
+                        <div class="g-force-crosshair-h"></div>
+                        <div class="g-force-ghost-container" id="g-force-ghost-container"></div>
+                        <div class="g-force-dot" id="g-force-dot"></div>
+                        <div class="g-label g-label-top" id="g-fwd">1.5 G</div>
+                        <div class="g-label g-label-bottom" id="g-rev">-1.5 G</div>
+                        <div class="g-label g-label-left" id="g-left">1.5 G</div>
+                        <div class="g-label g-label-right" id="g-right">-1.5 G</div>
+                    </div>
+                </div>
+                <div class="stats-row">
+                    <div class="stat-col">
+                        <span class="label">Lat G</span>
+                        <span class="value" id="g-lat-val">0.00</span>
+                    </div>
+                    <div class="stat-col">
+                        <span class="label">Lon G</span>
+                        <span class="value" id="g-lon-val">0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="footer">
+                <span class="hotkey">PAGE DOWN TO CYCLE DATA</span>
+            </div>
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>

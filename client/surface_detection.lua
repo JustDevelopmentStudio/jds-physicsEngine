@@ -59,11 +59,11 @@ function GetGroundRaycastResult(handle)
     return getRaycastResult(handle)
 end
 
---- Synchronous single-point (may have 1-frame lag; use for non-critical paths)
+--- Synchronous single-point (highly optimized for 50ms loops, no thread locks)
 local function getGroundMaterialAtPositionSync(x, y, z)
     if not x or not y or not z then return nil end
     local handle = startRaycast(x, y, z)
-    Wait(0)
+    -- Wait(0) removed to prevent yielding the 50ms tick engine physics loops!
     return getRaycastResult(handle)
 end
 

@@ -1,0 +1,321 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Rajdhani', sans-serif;
+    user-select: none;
+}
+
+body {
+    background-color: transparent;
+    overflow: hidden;
+}
+
+.hidden {
+    display: none !important;
+}
+
+#telemetry-container {
+    position: absolute;
+    bottom: 50px;
+    right: 50px;
+    width: 340px;
+    color: white;
+}
+
+.glass-panel {
+    background: rgba(10, 15, 25, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 24px;
+    border-top: 3px solid #00ffcc;
+}
+
+.header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.header h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 18px;
+    letter-spacing: 2px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #00ffcc;
+}
+
+#page-indicator {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.category-title {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+    margin-top: 5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* CAR TIRES */
+.car-diagram {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+    margin: 20px 0;
+    align-items: center;
+}
+
+.axle {
+    display: flex;
+    justify-content: space-between;
+    width: 85%;
+    position: relative;
+}
+
+.axle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 20px;
+    right: 20px;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.15);
+    z-index: 1;
+}
+
+.wheel-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    z-index: 2;
+    gap: 4px;
+}
+
+.tire {
+    width: 25px;
+    height: 50px;
+    background: #3498db; /* Blue for cold, red for hot */
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: background 0.1s ease;
+}
+
+.temp-label {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.bar-container {
+    width: 25px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.susp-bar {
+    height: 100%;
+    width: 50%;
+    background: #00ffcc;
+    transition: width 0.05s linear;
+}
+
+.stats-row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.stat-col {
+    display: flex;
+    flex-direction: column;
+    width: 45%;
+}
+
+.label {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+    text-transform: uppercase;
+}
+
+.value {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: 'Orbitron', sans-serif;
+}
+
+.progress-bg {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    margin: 6px 0;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: #e74c3c;
+    border-radius: 4px;
+    transition: width 0.2s ease;
+}
+
+/* PAGE 2 */
+.data-grid {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 25px;
+}
+
+.data-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 12px;
+    border-radius: 8px;
+    width: 30%;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.highlight {
+    color: #f1c40f;
+    font-size: 26px;
+}
+
+.pedal-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.input-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.input-label {
+    font-size: 13px;
+    font-weight: 700;
+    width: 35px;
+}
+
+.input-bar-bg {
+    flex-grow: 1;
+    height: 14px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 7px;
+    overflow: hidden;
+}
+
+.input-bar-fill {
+    height: 100%;
+    width: 0%;
+}
+
+.throttle { background: #2ecc71; }
+.brake { background: #e74c3c; }
+
+/* PAGE 3: G-FORCE */
+.g-force-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 30px 0 20px 0;
+}
+
+.g-force-circle {
+    position: relative;
+    width: 200px;
+    height: 200px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.g-force-bound {
+    position: absolute;
+    top: 25%;
+    left: 25%;
+    width: 50%;
+    height: 50%;
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 50%;
+}
+
+.g-force-crosshair-v {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.g-force-crosshair-h {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.g-force-dot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    background-color: #00ffcc; /* Solid color, no glow! */
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: top 0.05s linear, left 0.05s linear;
+    z-index: 10;
+}
+
+.g-label {
+    position: absolute;
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.3);
+}
+
+.g-label-top { top: -20px; left: 50%; transform: translateX(-50%); }
+.g-label-bottom { bottom: -20px; left: 50%; transform: translateX(-50%); }
+.g-label-left { top: 50%; left: -32px; transform: translateY(-50%); }
+.g-label-right { top: 50%; right: -32px; transform: translateY(-50%); }
+
+.footer {
+    margin-top: 20px;
+    text-align: center;
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+    font-weight: bold;
+}
+
+/* Ghost trail system for G-Force meter */
+.g-force-ghost-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.g-ghost-dot {
+    position: absolute;
+    background-color: #00ffcc;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
